@@ -1,0 +1,5 @@
+fastapi
+pymongo
+schematics
+pymongo[srv]
+dnspython
