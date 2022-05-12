@@ -1,2 +1,0 @@
-# HelpDesk-Backend
-
