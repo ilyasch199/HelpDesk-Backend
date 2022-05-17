@@ -1,56 +1,23 @@
-from typing import Optional
-from bson.objectid import ObjectId
-
-from fastapi import FastAPI
-
-from schematics.models import Model
 from json import dumps
-from schematics.types import StringType, EmailType, IntType
+from telnetlib import STATUS
+from typing import List
+from unicodedata import name
+from models.projects import create_project, updateproject
+from models.tasks import UpdateTaskModel, create_task
+from models.tickets import UpdateTicketModel, create_ticket
+from routes.users import check_login_creds, create_user
+from schemas.projects import ProjectEntity, ProjectsEntity
+from schemas.tasks import TaskEntity, TasksEntity
+from schemas.tickets import TicketEntity, ticketsEntity
+from schemas.users import serializeDict ,usersEntity
+from bson.objectid import ObjectId
+from fastapi import Body, FastAPI
+from fastapi.encoders import jsonable_encoder
+
 import connection
+from models.users import User , UpdateUserModel, Userp
 
 #from models import users
-class User(Model):
-    id= ObjectId()
-    email= EmailType(required=True)
-    name= StringType(required=True) 
-    password= StringType(required=True)
-    role_as= IntType(required=True) 
-    phone_number= IntType(required=True) 
-
-newuser = User()
-
-def create_user(email, username, password , role_as , phone_number):
-    newuser.id = ObjectId()
-    newuser.email = email
-    newuser.name = username
-    newuser.password = password
-    newuser.role_as = role_as
-    newuser.phone_number = phone_number
-    return dict(newuser)
-
-# A method to check if the email parameter exists from the users database before validation of details
-def name_exists(name):
-    user_exist = True
-
-    # counts the number of times the email exists, if it equals 0 it means the email doesn't exist in the database
-    if connection.db.Users.count_documents(
-        {'name': name}
-    )== 0:
-        user_exist = False
-        return user_exist
-
-# Reads user details from database and ready for validation
-def check_login_creds(name, password):
-    if not name_exists(name):
-        activeuser = connection.db.Users.find(
-            {'name': name}
-        )
-        for actuser in activeuser:
-            actuser = dict(actuser)
-            # Converted the user ObjectId to str! so this can be stored into a session(how login works)
-            actuser['_id'] = str(actuser['_id'])    
-            return actuser
-
 
 app = FastAPI()
 
@@ -61,7 +28,7 @@ def index():
 
 # Signup endpoint with the POST method
 @app.post("/signup")
-def signup(email, username: str, password: str , role_as: int , phone_number: int):
+def signup(email, username: str, password: str , role_as: int , phone_number: str):
     user_exists = False
     data = create_user(email, username, password, role_as , phone_number)
 
@@ -78,22 +45,146 @@ def signup(email, username: str, password: str , role_as: int , phone_number: in
     # If the email doesn't exist, create the user
     if user_exists == False:
         connection.db.Users.insert_one(data)
-        return {"message":"User Created","email": data['email'], "name": data['name'], "pass": data['password'], "role_as" : data['role_as'], "phone number" : data["phone_number"]}
+        return {"STATUS" : "1" ,"message":"User Created","email": data['email'], "name": data['name'], "pass": data['password'], "role_as" : data['role_as'], "phone number" : data["phone_number"]}
 
 # Login endpoint
 @app.get("/login/{name}/{password}")
 def login(name, password):
     def log_user_in(creds):
         if creds['name'] == name and creds['password'] == password:
-            return {"message": creds['name'] + ' successfully logged in'}
+            return {"STATUS" : "1" , "message": creds['name'] + ' successfully logged in' , "user_id" : creds['_id'] , "user_role" : creds['role_as']}
         else:
-            return {"message":"Invalid credentials!!"}
+            return {"STATUS" : "0" ,"message":"Invalid credentials!!"}
     # Read email from database to validate if user exists and checks if password matches
     logger = check_login_creds(name, password)
     if bool(logger) != True:
         if logger == None:
-            logger = "Invalid username"
+            logger = "Invalid creds"
             return {"message":logger}
     else:
         status = log_user_in(logger)
         return {"Info":status}
+
+# USERS
+
+@app.get('/usersList')
+async def find_all_users():
+    return usersEntity(connection.db.Users.find())
+
+@app.patch('/userUpdate/{id}')
+async def update_user(id, user : UpdateUserModel):
+    nu = user.dict(exclude_unset=True)
+    connection.db.Users.find_one_and_update({"_id":ObjectId(id)},{"$set":nu})
+    u = serializeDict(connection.db.Users.find_one({"_id":ObjectId(id)}))
+    return {"STATUS" : "1" ,"message":"User Updated","email": u['email'], "name": u['name'], "pass": u['password'],
+     "role_as" : u['role_as'], "phone number" : u["phone_number"]}
+
+@app.delete('/userDelete/{id}')
+async def delete_user(id):
+    if connection.db.Users.find_one_and_delete({"_id":ObjectId(id)}) :
+        return {"STATUS" : "1" , "message" : "user deleted successfully" }
+    else :
+        return {"STATUS" : "0" , "message" : "user not found" }
+
+# TICKET
+ 
+@app.get('/ticketsList/{id}')
+async def find_all_tickets(id):
+    u = connection.db.Users.find_one({"_id":ObjectId(id)})
+    if u['role_as'] == 1 :
+        return ticketsEntity(connection.db.Tickets.find())
+    elif u['role_as'] == 2 :
+        return ticketsEntity(connection.db.Tickets.find({"assign_to": id}))
+    elif u['role_as'] == 3 :
+        return ticketsEntity(connection.db.Tickets.find({"user_id": id}))
+
+@app.post('/addticket')
+def add_ticket(name_ticket: str , description_ticket: str , user_id: str):
+    t = create_ticket (name_ticket , description_ticket , user_id)
+    connection.db.Tickets.insert_one(t)
+    return {"STATUS" : "1" , "message" : "ticket added successfully" , "name_ticket" : t['name_ticket'] 
+    , "description_ticket" : t['description_ticket'] , "date_ticket" : t['date_ticket'] , "assign_to" : t['assign_to'] 
+    , "date_of_assignment" : t['date_of_assignment'] , "status" : t['status'] 
+    , "user_id" : t['user_id'] , "id_project" : t['id_project']}
+
+@app.patch('/updateticket/{id}')
+async def update_ticket(id,ticket: UpdateTicketModel):
+    nu = ticket.dict(exclude_unset=True)
+    connection.db.Tickets.find_one_and_update({"_id":ObjectId(id)},{"$set":nu})
+    t = TicketEntity(connection.db.Tickets.find_one({"_id":ObjectId(id)}))
+    return {"STATUS" : "1" ,"message":"ticket Updated","name_ticket": t['name_ticket'], "description_ticket": t['description_ticket'], 
+    "date_ticket": t['date_ticket'], "assign_to" : t['assign_to'], "date_of_assignment" : t["date_of_assignment"],
+    "status" : t["status"], "user_id" : t['user_id'] , "id_project" : t['id_project']}
+
+@app.delete('/deleteticket/{id}')
+async def delete_ticket(id):
+    if connection.db.Tickets.find_one_and_delete({"_id":ObjectId(id)}) :
+        return {"STATUS" : "1" , "message" : "ticket deleted successfully" }
+    else :
+        return {"STATUS" : "0" , "message" : "ticket not found" }
+
+#PROJECT
+
+@app.get('/projectList')
+async def find_all_projects():
+    return ProjectsEntity(connection.db.Projects.find())
+
+@app.post('/projectAdd')
+async def add_project(name_project : str , description_project : str , id_ticket : str):
+    p = create_project (name_project , description_project , id_ticket)
+    connection.db.Projects.insert_one(p)
+    h = ProjectEntity(connection.db.Projects.find_one({"name_project": name_project}))
+    id_pr = str(h.get('id'))
+    id_ti = ObjectId(id_ticket)
+    ticket = UpdateTicketModel(id_projet = id_pr)
+    nu = ticket.dict(exclude_unset=True)
+    connection.db.Tickets.find_one_and_update({"_id":id_ti},{"$set":nu})      
+    return {"STATUS" : "1" , "message" : "project added successfully" , "name_project" : p['name_project'] , 
+    "description_project" : p['description_project'] , "id_ticket" : p['id_ticket'] , "id_projet" : id_pr}
+
+@app.patch('/projectUpdate/{id}')
+async def update_project(id , project : updateproject):
+    nu = project.dict(exclude_unset=True)
+    connection.db.Projects.find_one_and_update({"_id":ObjectId(id)},{"$set":nu})
+    p = ProjectEntity(connection.db.Projects.find_one({"_id":ObjectId(id)}))
+    return {"STATUS" : "1" , "message" : "project updated successfully" , "name_project" : p['name_project'] , 
+    "description_project" : p['description_project'] , "status" : p['status']}   
+
+@app.delete('/projectDelete/{id}')
+async def delete_project(id):
+    if connection.db.Projects.find_one_and_delete({"_id":ObjectId(id)}) :
+        return {"STATUS" : "1" , "message" : "project deleted successfully" }
+    else :
+        return {"STATUS" : "0" , "message" : "project not found" }
+
+#TASK
+
+@app.get('/tasksList')
+async def find_all_tasks():
+    return TasksEntity(connection.db.Tasks.find())
+
+@app.post('/taskAdd')
+async def add_task(name_task : str , description_task : str , id_project : str):
+    t = create_task (name_task , description_task , id_project)
+    connection.db.Tasks.insert_one(t)
+    return {"STATUS" : "1" , "message" : "task added successfully" , "name_task" : t['name_task'],"description_task" : t['description_task'] 
+    , "id_project" : t['id_project'] , "status" : t['status']}
+
+@app.patch('/taskUpdate/{id}')
+async def update_task(id, task : UpdateTaskModel):
+    nu = task.dict(exclude_unset=True)
+    connection.db.Tasks.find_one_and_update({"_id":ObjectId(id)},{"$set":nu})
+    t = TaskEntity(connection.db.Tasks.find_one({"_id":ObjectId(id)}))
+    return {"STATUS" : "1" , "message" : "task updated successfully" , "name_task" : t['name_task'],"description_task" : t['description_task'] 
+    , "id_project" : t['id_project'] , "status" : t['status']}
+
+@app.delete('/taskDelete/{id}')
+async def delete_task(id):
+    if connection.db.Tasks.find_one_and_delete({"_id":ObjectId(id)}) :
+        return {"STATUS" : "1" , "message" : "project deleted successfully" }
+    else :
+        return {"STATUS" : "0" , "message" : "project not found" }
+
+@app.get('/projectTasks/{id}')
+async def get_project_tasks(id):
+    return TasksEntity(connection.db.Tasks.find({"id_project": id}))

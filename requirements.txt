@@ -3,3 +3,6 @@ pymongo
 schematics
 pymongo[srv]
 dnspython
+motor
+pydantic
+pydantic[email]
