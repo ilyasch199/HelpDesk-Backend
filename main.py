@@ -13,13 +13,28 @@ from schemas.users import serializeDict ,usersEntity
 from bson.objectid import ObjectId
 from fastapi import Body, FastAPI
 from fastapi.encoders import jsonable_encoder
+from fastapi.middleware.cors import CORSMiddleware
 
 import connection
 from models.users import User , UpdateUserModel, Userp
 
-#from models import users
-
 app = FastAPI()
+
+origins = [
+    "http://localhost",
+    "http://localhost:8080",
+    "http://localhost:8081",
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
 
 # Our root endpoint
 @app.get("/")
@@ -60,7 +75,7 @@ def login(name, password):
     if bool(logger) != True:
         if logger == None:
             logger = "Invalid creds"
-            return {"message":logger}
+            return {"STATUS" : "0","message":logger}
     else:
         status = log_user_in(logger)
         return {"Info":status}
@@ -123,6 +138,13 @@ async def delete_ticket(id):
     else :
         return {"STATUS" : "0" , "message" : "ticket not found" }
 
+@app.get('/projectofticket')
+async def get_project_of_ticket(id : str):
+#    return ProjectEntity(connection.db.Projects.find_one({"id_ticket" : id}))
+    if connection.db.Projects.find_one({"id_ticket": id}):
+        return ProjectEntity(connection.db.Projects.find_one({"id_ticket": id}))
+    else:
+        return []
 #PROJECT
 
 @app.get('/projectList')
@@ -136,11 +158,11 @@ async def add_project(name_project : str , description_project : str , id_ticket
     h = ProjectEntity(connection.db.Projects.find_one({"name_project": name_project}))
     id_pr = str(h.get('id'))
     id_ti = ObjectId(id_ticket)
-    ticket = UpdateTicketModel(id_projet = id_pr)
+    ticket = UpdateTicketModel(id_project = id_pr)
     nu = ticket.dict(exclude_unset=True)
     connection.db.Tickets.find_one_and_update({"_id":id_ti},{"$set":nu})      
-    return {"STATUS" : "1" , "message" : "project added successfully" , "name_project" : p['name_project'] , 
-    "description_project" : p['description_project'] , "id_ticket" : p['id_ticket'] , "id_projet" : id_pr}
+    return {"STATUS" : "1" , "message" : "project added successfully" , "name_project" : h['name_project'] , 
+    "description_project" : h['description_project'] , "id_ticket" : h['id_ticket'] , "id_project" : id_pr}
 
 @app.patch('/projectUpdate/{id}')
 async def update_project(id , project : updateproject):
